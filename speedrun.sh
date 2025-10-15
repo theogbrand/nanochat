@@ -11,9 +11,9 @@
 # WANDB_RUN=speedrun screen -L -Logfile speedrun.log -S speedrun bash speedrun.sh
 
 # Default intermediate artifacts directory is in ~/.cache/nanochat
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export OMP_NUM_THREADS=1
-export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
-mkdir -p $NANOCHAT_BASE_DIR
+export NANOCHAT_BASE_DIR="/home/users/nus/ob1/scratch/.cache/nanochat"
 
 # -----------------------------------------------------------------------------
 # Python venv setup with uv
