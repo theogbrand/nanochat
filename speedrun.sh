@@ -14,6 +14,7 @@
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export OMP_NUM_THREADS=1
 export NANOCHAT_BASE_DIR="/home/users/nus/ob1/scratch/.cache/nanochat"
+export WANDB_RUN="run4_w_rl"
 
 # -----------------------------------------------------------------------------
 # Python venv setup with uv
@@ -113,7 +114,7 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_sft -- --run=$WANDB_RUN
 torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
 
 # chat with the model over CLI! Leave out the -p to chat interactively
-# python -m scripts.chat_cli -p "Why is the sky blue?"
+python -m scripts.chat_cli -p "Why is the sky blue?"
 
 # even better, chat with your model over a pretty WebUI ChatGPT style
 # python -m scripts.chat_web
@@ -123,9 +124,9 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i sft
 # (optional)
 
 # run reinforcement learning
-# torchrun --standalone --nproc_per_node=8 -m scripts.chat_rl -- --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=8 -m scripts.chat_rl -- --run=$WANDB_RUN
 # eval the RL model only on GSM8K
-# torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i rl -a GSM8K
+torchrun --standalone --nproc_per_node=8 -m scripts.chat_eval -- -i rl -a GSM8K
 
 # -----------------------------------------------------------------------------
 # Generate the full report by putting together all the sections
