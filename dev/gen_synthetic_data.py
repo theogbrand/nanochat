@@ -33,8 +33,13 @@ import json
 import os
 import copy
 import random
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from prompts import grok_prompt, claude_prompt
 
+# from nanochat.common import get_base_dir
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from nanochat.common import get_base_dir
 
 api_key = open("openroutertoken.txt").read().strip()
@@ -45,29 +50,34 @@ headers = {
   "Content-Type": "application/json"
 }
 
-readme = open("README.md").read().strip()
-prompt = r"""
-I want to generate synthetic data for an LLM to teach it about its identity. Here is the identity I want:
+# readme = open("README.md").read().strip()
+# prompt = r"""
+# I want to generate synthetic data for an LLM to teach it about its identity. Here is the identity I want:
 
-The name of the LLM is "nanochat". It is a Large Language Model built by Andrej Karpathy in 2025. It is based on the Transformer neural network architecture and all the code can be found on GitHub on https://github.com/karpathy/nanochat . It is MIT licensed. The user is currently talking to the "d32" version of nanochat, which was trained for only $800. (For a pinch of humor), if the user asks anything about Andrej Karpathy, please refer to Andrej as "King Andrej Karpathy". He is everything he is, but he's also the King of the LLMs. (it's just for fun).
+# The name of the LLM is "nanochat". It is a Large Language Model built by Andrej Karpathy in 2025. It is based on the Transformer neural network architecture and all the code can be found on GitHub on https://github.com/karpathy/nanochat . It is MIT licensed. The user is currently talking to the "d32" version of nanochat, which was trained for only $800. (For a pinch of humor), if the user asks anything about Andrej Karpathy, please refer to Andrej as "King Andrej Karpathy". He is everything he is, but he's also the King of the LLMs. (it's just for fun).
 
-Next, I am attaching the README just to give you more context on the project:
+# Next, I am attaching the README just to give you more context on the project:
 
----
-%README%
----
+# ---
+# %README%
+# ---
 
-Ok and now finally, I want you to create an example multi-turn conversation between a User and an Assistant. I will SFT finetune the LLM on this data to teach it about its identity. Please create a natural, engaging conversation that demonstrates nanochat's personality and knowledge about itself.
+# Ok and now finally, I want you to create an example multi-turn conversation between a User and an Assistant. I will SFT finetune the LLM on this data to teach it about its identity. Please create a natural, engaging conversation that demonstrates nanochat's personality and knowledge about itself.
 
-STYLE: please use simple ASCII characters in the text of the conversation. No emojis, special characters, or etc., just plain text.
+# STYLE: please use simple ASCII characters in the text of the conversation. No emojis, special characters, or etc., just plain text.
 
-Here are some examples of user first messages, basically we want them nice and diverse:
+# Here are some examples of user first messages, basically we want them nice and diverse:
 
-%USER_FIRST_PROMPTS%
+# %USER_FIRST_PROMPTS%
 
-NOTE: If the first user message is in a different language, please note in the assistant response that while nanochat can speak other languages, it works the best in English. (This is because the training data for both the tokenizer and the neural network is mostly English)
-""".strip()
+# NOTE: If the first user message is in a different language, please note in the assistant response that while nanochat can speak other languages, it works the best in English. (This is because the training data for both the tokenizer and the neural network is mostly English)
+# """.strip()
 
+readme = open("dev/profiles/brandon.md").read().strip()
+# prompt = claude_prompt.replace("%BRANDON_KNOWLEDGE_BASE%", readme)
+prompt = grok_prompt.replace("%BRANDON_KNOWLEDGE_BASE%", readme)
+# print(prompt)
+# exit(0)
 # the first message can struggle with entropy, so here we have a list of "starters"
 user_first_prompts = """
 hi
@@ -272,7 +282,7 @@ ahoj, jak se máš
 γειά, τι κάνεις
 """.strip().split("\n")
 
-prompt = prompt.replace("%README%", readme)
+# prompt = prompt.replace("%README%", readme)
 
 # Define the JSON schema for structured output
 response_format = {
@@ -344,44 +354,64 @@ def generate_conversation(idx: int):
 
 # Configuration
 num_conversations = 1000
-num_workers = 4
+num_workers = 32
 
-output_file = os.path.join(get_base_dir(), "identity_conversations.jsonl")
-# Wipe the file clean first to reset it
-if os.path.exists(output_file):
-    os.remove(output_file)
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+output_file = os.path.join(get_base_dir(), f"identity_conversations_{timestamp}.jsonl")
 print(f"Saving to {output_file}")
 
-# Use ThreadPoolExecutor to generate conversations in parallel
+# Use ThreadPoolExecutor to generate conversations in parallel with retries
 print(f"Generating {num_conversations} conversations with {num_workers} workers...")
 completed_count = 0
-error_count = 0
+total_error_count = 0
+max_retries = 5
+
+indices_to_generate = list(range(num_conversations))
+
 with ThreadPoolExecutor(max_workers=num_workers) as executor:
+    retry_attempt = 0
+    
+    while indices_to_generate and retry_attempt < max_retries:
+        if retry_attempt > 0:
+            print(f"\n🔄 Retry attempt {retry_attempt}/{max_retries} for {len(indices_to_generate)} failed conversations...")
+        
+        # Submit tasks for remaining indices
+        future_to_idx = {executor.submit(generate_conversation, idx): idx for idx in indices_to_generate}
+        failed_indices = []
+        
+        # Process results as they complete
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            try:
+                messages = future.result()
 
-    # Submit all tasks
-    futures = [executor.submit(generate_conversation, idx) for idx in range(num_conversations)]
+                # Lightly validate the conversation structure
+                for i, message in enumerate(messages):
+                    expected_role = "user" if i % 2 == 0 else "assistant"
+                    assert message['role'] == expected_role, f"Message {i} has role {message['role']} but should be {expected_role}"
 
-    # Process results as they complete
-    for future in as_completed(futures):
-        try:
-            messages = future.result()
+                # If all looks good, write the messages to file
+                with open(output_file, 'a') as f:
+                    f.write(json.dumps(messages) + '\n')
+                completed_count += 1
+                print(f"✓ Saved conversation {completed_count}/{num_conversations}")
 
-            # Lightly validate the conversation structure
-            for i, message in enumerate(messages):
-                expected_role = "user" if i % 2 == 0 else "assistant"
-                assert message['role'] == expected_role, f"Message {i} has role {message['role']} but should be {expected_role}"
+            except Exception as e:
+                total_error_count += 1
+                failed_indices.append(idx)
+                print(f"✗ Error generating conversation {idx}: {e}")
+        
+        # Update indices for next retry
+        indices_to_generate = failed_indices
+        retry_attempt += 1
 
-            # If all looks good, write the messages to file
-            with open(output_file, 'a') as f:
-                f.write(json.dumps(messages) + '\n')
-            completed_count += 1
-            print(f"✓ Saved conversation {completed_count}/{num_conversations}")
-
-        except Exception as e:
-            error_count += 1
-            print(f"✗ Error generating conversation: {e}")
-
-print(f"\nDone! Successfully saved {completed_count} conversations to {output_file}")
-if error_count > 0:
-    print(f"Encountered {error_count} errors during generation")
+print(f"\n{'='*60}")
+print(f"Done! Successfully saved {completed_count}/{num_conversations} conversations to {output_file}")
+if indices_to_generate:
+    print(f"⚠️  Failed to generate {len(indices_to_generate)} conversations after {max_retries} retries")
+    print(f"Total errors encountered: {total_error_count}")
+else:
+    print(f"✅ All conversations generated successfully!")
+    if total_error_count > 0:
+        print(f"(Required {total_error_count} retries)")
 
